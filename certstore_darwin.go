@@ -218,10 +218,15 @@ func (i *macIdentity) Delete() error {
 	// }
 	// defer C.CFRelease(C.CFTypeRef(ccrtitemList))
 
+	certRef, err := i.getCertRef()
+	if err != nil {
+		return err
+	}
+
 	crtquery := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
 		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassCertificate),
 		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitOne),
-		C.CFTypeRef(C.kSecValueRef):   C.CFTypeRef(i.cref),
+		C.CFTypeRef(C.kSecValueRef):   C.CFTypeRef(certRef),
 	})
 	if crtquery == nilCFDictionaryRef {
 		return errors.New("error creating CFDictionary")
