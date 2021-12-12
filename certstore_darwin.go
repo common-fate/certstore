@@ -229,6 +229,28 @@ func (i *macIdentity) Delete() error {
 		return err
 	}
 
+	// also delete the certificate
+	crtitemList := []C.SecCertificateRef{i.cref}
+	crtitemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&crtitemList[0]))
+	ccrtitemList := C.CFArrayCreate(nilCFAllocatorRef, crtitemListPtr, 1, nil)
+	if ccrtitemList == nilCFArrayRef {
+		return errors.New("error creating CFArray")
+	}
+	defer C.CFRelease(C.CFTypeRef(ccrtitemList))
+
+	crtquery := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):         C.CFTypeRef(C.kSecClassIdentity),
+		C.CFTypeRef(C.kSecMatchItemList): C.CFTypeRef(ccrtitemList),
+	})
+	if crtquery == nilCFDictionaryRef {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(crtquery))
+
+	if err := osStatusError(C.SecItemDelete(crtquery)); err != nil {
+		return err
+	}
+
 	return nil
 }
 
