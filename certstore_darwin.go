@@ -239,7 +239,7 @@ func (i *macIdentity) Delete() error {
 	defer C.CFRelease(C.CFTypeRef(ccrtitemList))
 
 	crtquery := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecClass):         C.CFTypeRef(C.kSecClassIdentity),
+		C.CFTypeRef(C.kSecClass):         C.CFTypeRef(C.kSecClassCertificate),
 		C.CFTypeRef(C.kSecMatchItemList): C.CFTypeRef(ccrtitemList),
 	})
 	if crtquery == nilCFDictionaryRef {
