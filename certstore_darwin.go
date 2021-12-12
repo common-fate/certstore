@@ -208,6 +208,30 @@ func (i *macIdentity) Signer() (crypto.Signer, error) {
 
 // Delete implements the Identity interface.
 func (i *macIdentity) Delete() error {
+
+	// delete the certificate
+	// crtitemList := []C.SecCertificateRef{i.cref}
+	// crtitemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&crtitemList[0]))
+	// ccrtitemList := C.CFArrayCreate(nilCFAllocatorRef, crtitemListPtr, 1, nil)
+	// if ccrtitemList == nilCFArrayRef {
+	// 	return errors.New("error creating CFArray")
+	// }
+	// defer C.CFRelease(C.CFTypeRef(ccrtitemList))
+
+	crtquery := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassCertificate),
+		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitOne),
+		C.CFTypeRef(C.kSecValueRef):   C.CFTypeRef(i.cref),
+	})
+	if crtquery == nilCFDictionaryRef {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(crtquery))
+
+	if err := osStatusError(C.SecItemDelete(crtquery)); err != nil {
+		return err
+	}
+
 	itemList := []C.SecIdentityRef{i.ref}
 	itemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&itemList[0]))
 	citemList := C.CFArrayCreate(nilCFAllocatorRef, itemListPtr, 1, nil)
@@ -226,28 +250,6 @@ func (i *macIdentity) Delete() error {
 	defer C.CFRelease(C.CFTypeRef(query))
 
 	if err := osStatusError(C.SecItemDelete(query)); err != nil {
-		return err
-	}
-
-	// also delete the certificate
-	crtitemList := []C.SecCertificateRef{i.cref}
-	crtitemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&crtitemList[0]))
-	ccrtitemList := C.CFArrayCreate(nilCFAllocatorRef, crtitemListPtr, 1, nil)
-	if ccrtitemList == nilCFArrayRef {
-		return errors.New("error creating CFArray")
-	}
-	defer C.CFRelease(C.CFTypeRef(ccrtitemList))
-
-	crtquery := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecClass):         C.CFTypeRef(C.kSecClassCertificate),
-		C.CFTypeRef(C.kSecMatchItemList): C.CFTypeRef(ccrtitemList),
-	})
-	if crtquery == nilCFDictionaryRef {
-		return errors.New("error creating CFDictionary")
-	}
-	defer C.CFRelease(C.CFTypeRef(crtquery))
-
-	if err := osStatusError(C.SecItemDelete(crtquery)); err != nil {
 		return err
 	}
 
