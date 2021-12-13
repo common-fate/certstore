@@ -3,12 +3,15 @@ package certstore
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"testing"
 
 	"github.com/github/fakeca"
@@ -289,6 +292,97 @@ func TestSignerECDSA(t *testing.T) {
 		_, err = signer.Sign(rand.Reader, sha512Digest[5:], crypto.SHA512)
 		if err == nil {
 			t.Fatal("expected error for bad digest size")
+		}
+	})
+}
+
+func TestCertificatesList(t *testing.T) {
+	withStore(t, func(s Store) {
+		certs, err := s.Certificates(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, cert := range certs {
+			crt, err := cert.Get()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Log(crt.Subject.CommonName)
+			if crt.Subject.CommonName == "certstore:test" {
+				t.Log("deleting cert")
+				err = cert.Delete()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		t.Fatal("faiol")
+
+		// first := certs[0]
+		// cert, err := first.Get()
+		// if err != nil {
+		// 	t.Fatal(err)
+		// }
+		// t.Fatalf("CN = %s", cert.Subject.CommonName)
+	})
+}
+
+func TestCertificates(t *testing.T) {
+	withStore(t, func(s Store) {
+		// delete an existing cert if one exists
+		certs, err := s.Certificates(&CertificateFilter{
+			SubjectStartsWith: "certstore-test",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range certs {
+			err = c.Delete()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		tmpl := x509.Certificate{
+			SerialNumber: big.NewInt(1000),
+			Subject: pkix.Name{
+				CommonName: "certstore-test",
+			},
+			DNSNames: []string{"test.local"},
+		}
+		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = s.AddCertificate(cert)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		certs, err = s.Certificates(&CertificateFilter{
+			SubjectStartsWith: "certstore-test",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(certs) != 1 {
+			t.Fatal("could not find cert after it was created")
+		}
+		// delete the certificate
+		for _, c := range certs {
+			err = c.Delete()
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 }

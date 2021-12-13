@@ -88,6 +88,16 @@ func openStore() (*winStore, error) {
 	return &winStore{store}, nil
 }
 
+// Certificates is not yet implemented on windows
+func (s *winStore) Certificates(filter *CertificateFilter) ([]Certificate, error) {
+	return nil, nil
+}
+
+// AddCertificate is not yet implemented on windows
+func (s *winStore) AddCertificate(cert *x509.Certificate) error {
+	return errors.New("AddCertificate is not yet implemented on Windows")
+}
+
 // Identities implements the Store interface.
 func (s *winStore) Identities(unusedFlags int) ([]Identity, error) {
 	var (

@@ -111,6 +111,88 @@ func (s macStore) Import(data []byte, password string) error {
 	return nil
 }
 
+// Identities implements the Store interface.
+func (s macStore) Certificates(filter *CertificateFilter) ([]Certificate, error) {
+	rawQuery := map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassCertificate),
+		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
+		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
+	}
+
+	if filter != nil && filter.SubjectStartsWith != "" {
+		startsWith := stringToCFString(filter.SubjectStartsWith)
+		rawQuery[C.CFTypeRef(C.kSecMatchSubjectStartsWith)] = C.CFTypeRef(startsWith)
+	}
+
+	query := mapToCFDictionary(rawQuery)
+	if query == nilCFDictionaryRef {
+		return nil, errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(query))
+
+	var absResult C.CFTypeRef
+	if err := osStatusError(C.SecItemCopyMatching(query, &absResult)); err != nil {
+		if err == errSecItemNotFound {
+			return []Certificate{}, nil
+		}
+
+		return nil, err
+	}
+	defer C.CFRelease(C.CFTypeRef(absResult))
+
+	// don't need to release aryResult since the abstract result is released above.
+	aryResult := C.CFArrayRef(absResult)
+
+	// identRefs aren't owned by us initially. newMacIdentity retains them.
+	n := C.CFArrayGetCount(aryResult)
+	identRefs := make([]C.CFTypeRef, n)
+	C.CFArrayGetValues(aryResult, C.CFRange{0, n}, (*unsafe.Pointer)(unsafe.Pointer(&identRefs[0])))
+
+	idents := make([]Certificate, 0, n)
+	for _, identRef := range identRefs {
+		idents = append(idents, newMacCertificate(C.SecCertificateRef(identRef)))
+	}
+
+	return idents, nil
+}
+
+func (s macStore) AddCertificate(cert *x509.Certificate) error {
+	if len(cert.Raw) == 0 {
+		return errors.New("cert.Raw is empty")
+	}
+	cdata, err := bytesToCFData(cert.Raw)
+	if err != nil {
+		return err
+	}
+	defer C.CFRelease(C.CFTypeRef(cdata))
+
+	cref := C.SecCertificateCreateWithData(nilCFAllocatorRef, cdata)
+	if cref == 0x00 {
+		return errors.New("cref is nil: certificate is malformed")
+	}
+	defer C.CFRelease(C.CFTypeRef(cref))
+
+	// use the subject common name as the label
+	label := stringToCFString(cert.Subject.CommonName)
+
+	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):     C.CFTypeRef(C.kSecClassCertificate),
+		C.CFTypeRef(C.kSecValueRef):  C.CFTypeRef(cref),
+		C.CFTypeRef(C.kSecAttrLabel): C.CFTypeRef(label),
+	})
+	if query == nilCFDictionaryRef {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(query))
+
+	// https://developer.apple.com/documentation/security/certificate_key_and_trust_services/certificates/storing_a_certificate_in_the_keychain
+	if err := osStatusError(C.SecItemAdd(query, nil)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Close implements the Store interface.
 func (s macStore) Close() {}
 
@@ -126,6 +208,63 @@ type macIdentity struct {
 func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
 	C.CFRetain(C.CFTypeRef(ref))
 	return &macIdentity{ref: ref}
+}
+
+// macCertificate implements the Certificate interface.
+type macCertificate struct {
+	ref C.SecCertificateRef
+	crt *x509.Certificate
+}
+
+func newMacCertificate(ref C.SecCertificateRef) *macCertificate {
+	C.CFRetain(C.CFTypeRef(ref))
+	return &macCertificate{ref: ref}
+}
+
+func (c *macCertificate) Get() (*x509.Certificate, error) {
+	if c.crt != nil {
+		return c.crt, nil
+	}
+
+	derRef := C.SecCertificateCopyData(c.ref)
+	if derRef == nilCFDataRef {
+		return nil, errors.New("error getting certificate")
+	}
+	defer C.CFRelease(C.CFTypeRef(derRef))
+
+	der := cfDataToBytes(derRef)
+	crt, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+
+	c.crt = crt
+
+	return crt, nil
+}
+
+func (c *macCertificate) Delete() error {
+	itemList := []C.SecCertificateRef{c.ref}
+	itemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&itemList[0]))
+	citemList := C.CFArrayCreate(nilCFAllocatorRef, itemListPtr, 1, nil)
+	if citemList == nilCFArrayRef {
+		return errors.New("error creating CFArray")
+	}
+	defer C.CFRelease(C.CFTypeRef(citemList))
+
+	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecClass):         C.CFTypeRef(C.kSecClassCertificate),
+		C.CFTypeRef(C.kSecMatchItemList): C.CFTypeRef(citemList),
+	})
+	if query == nilCFDictionaryRef {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(query))
+
+	if err := osStatusError(C.SecItemDelete(query)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Certificate implements the Identity interface.
@@ -208,35 +347,6 @@ func (i *macIdentity) Signer() (crypto.Signer, error) {
 
 // Delete implements the Identity interface.
 func (i *macIdentity) Delete() error {
-
-	// delete the certificate
-	// crtitemList := []C.SecCertificateRef{i.cref}
-	// crtitemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&crtitemList[0]))
-	// ccrtitemList := C.CFArrayCreate(nilCFAllocatorRef, crtitemListPtr, 1, nil)
-	// if ccrtitemList == nilCFArrayRef {
-	// 	return errors.New("error creating CFArray")
-	// }
-	// defer C.CFRelease(C.CFTypeRef(ccrtitemList))
-
-	certRef, err := i.getCertRef()
-	if err != nil {
-		return err
-	}
-
-	crtquery := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassCertificate),
-		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitOne),
-		C.CFTypeRef(C.kSecValueRef):   C.CFTypeRef(certRef),
-	})
-	if crtquery == nilCFDictionaryRef {
-		return errors.New("error creating CFDictionary")
-	}
-	defer C.CFRelease(C.CFTypeRef(crtquery))
-
-	if err := osStatusError(C.SecItemDelete(crtquery)); err != nil {
-		return err
-	}
-
 	itemList := []C.SecIdentityRef{i.ref}
 	itemListPtr := (*unsafe.Pointer)(unsafe.Pointer(&itemList[0]))
 	citemList := C.CFArrayCreate(nilCFAllocatorRef, itemListPtr, 1, nil)
