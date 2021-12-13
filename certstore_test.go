@@ -296,38 +296,6 @@ func TestSignerECDSA(t *testing.T) {
 	})
 }
 
-func TestCertificatesList(t *testing.T) {
-	withStore(t, func(s Store) {
-		certs, err := s.Certificates(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		for _, cert := range certs {
-			crt, err := cert.Get()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Log(crt.Subject.CommonName)
-			if crt.Subject.CommonName == "certstore:test" {
-				t.Log("deleting cert")
-				err = cert.Delete()
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-		t.Fatal("faiol")
-
-		// first := certs[0]
-		// cert, err := first.Get()
-		// if err != nil {
-		// 	t.Fatal(err)
-		// }
-		// t.Fatalf("CN = %s", cert.Subject.CommonName)
-	})
-}
-
 func TestCertificates(t *testing.T) {
 	withStore(t, func(s Store) {
 		// delete an existing cert if one exists
